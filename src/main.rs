@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 mod dns;
 mod ethernet;
+mod http;
 
 // GET a webpage
 #[derive(Parser, Debug)]
@@ -59,4 +60,6 @@ fn main() {
             exit(1);
         }
     }
+    let mac = ethernet::MacAddress::generate();
+
 }
