@@ -146,7 +146,6 @@ pub fn get(
         };
 
         phy_wait(fd, iface.poll_delay(timestamp, &sockets))?;
-        println!("looping")
     }
 
     Ok(())
