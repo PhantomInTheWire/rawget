@@ -145,7 +145,6 @@ pub fn get(
             _ => state,
         };
 
-        // phy_wait returns io::Result<()>, now converts into UpstreamError via From<io::Error>
         phy_wait(fd, iface.poll_delay(timestamp, &sockets))?;
         println!("looping")
     }
