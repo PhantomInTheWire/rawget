@@ -5,6 +5,7 @@ use smoltcp::phy::TunTapInterface;
 use std::net::Ipv4Addr;
 use std::process::exit;
 use std::str::FromStr;
+use smoltcp::wire::EthernetAddress;
 
 mod dns;
 mod ethernet;
@@ -62,4 +63,15 @@ fn main() {
     }
     let mac = ethernet::MacAddress::generate();
 
+    let mac_eth_add_arr = mac.octets();
+    let mac_eth_add : EthernetAddress = EthernetAddress(mac_eth_add_arr);
+    println!("okay");
+    let _response = http::get(
+        tap,
+        mac_eth_add,
+        ip_addr,
+        url
+    );
+    println!("wtf");
+    exit(0);
 }

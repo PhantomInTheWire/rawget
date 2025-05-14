@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::net::IpAddr;
+use std::io;
+use std::net::{IpAddr, Ipv4Addr};
 use std::os::unix::io::AsRawFd;
 use std::str;
+use rand;
 use smoltcp::iface::{Config, Interface, SocketSet};
 use smoltcp::phy::{wait as phy_wait, Device, Medium, TunTapInterface};
-use smoltcp::socket::{tcp::Socket, tcp::SocketBuffer};
+use smoltcp::socket::{tcp::ConnectError, tcp::RecvError, tcp::SendError, tcp::Socket, tcp::SocketBuffer};
 use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Address};
 use url::Url;
@@ -19,9 +21,12 @@ enum HttpState {
 
 #[derive(Debug)]
 pub enum UpstreamError {
-    Network(smoltcp::socket::tcp::ConnectError),
+    Network(ConnectError),
+    Send(SendError),
+    Recv(RecvError),
     InvalidUrl,
     Content(std::str::Utf8Error),
+    Io(io::Error),
 }
 
 impl fmt::Display for UpstreamError {
@@ -30,15 +35,33 @@ impl fmt::Display for UpstreamError {
     }
 }
 
-impl From<smoltcp::socket::tcp::ConnectError> for UpstreamError {
-    fn from(error: smoltcp::socket::tcp::ConnectError) -> Self {
+impl From<ConnectError> for UpstreamError {
+    fn from(error: ConnectError) -> Self {
         UpstreamError::Network(error)
+    }
+}
+
+impl From<SendError> for UpstreamError {
+    fn from(error: SendError) -> Self {
+        UpstreamError::Send(error)
+    }
+}
+
+impl From<RecvError> for UpstreamError {
+    fn from(error: RecvError) -> Self {
+        UpstreamError::Recv(error)
     }
 }
 
 impl From<std::str::Utf8Error> for UpstreamError {
     fn from(error: std::str::Utf8Error) -> Self {
         UpstreamError::Content(error)
+    }
+}
+
+impl From<io::Error> for UpstreamError {
+    fn from(error: io::Error) -> Self {
+        UpstreamError::Io(error)
     }
 }
 
@@ -49,7 +72,7 @@ fn random_port() -> u16 {
 pub fn get(
     mut device: TunTapInterface,
     mac: EthernetAddress,
-    addr: IpAddr,
+    addr: Ipv4Addr,
     url: Url,
 ) -> Result<(), UpstreamError> {
     let domain_name = url.host_str().ok_or(UpstreamError::InvalidUrl)?;
@@ -64,13 +87,11 @@ pub fn get(
     config.random_seed = rand::random();
 
     let mut iface = Interface::new(config, &mut device, Instant::now());
-
     iface.update_ip_addrs(|ip_addrs| {
         ip_addrs
             .push(IpCidr::new(IpAddress::v4(192, 168, 42, 1), 24))
             .unwrap();
     });
-
     iface
         .routes_mut()
         .add_default_ipv4_route(Ipv4Address::new(192, 168, 42, 100))
@@ -93,7 +114,9 @@ pub fn get(
 
     loop {
         let timestamp = Instant::now();
-        iface.poll(timestamp, &mut device, &mut sockets)?;
+
+        // poll returns PollResult, so we drop the `?`
+        iface.poll(timestamp, &mut device, &mut sockets);
 
         let socket = sockets.get_mut::<Socket>(tcp_handle);
         let cx = iface.context();
@@ -117,14 +140,14 @@ pub fn get(
                 HttpState::Response
             }
 
-            HttpState::Response if !socket.may_recv() => {
-                break;
-            }
+            HttpState::Response if !socket.may_recv() => break,
 
             _ => state,
         };
 
+        // phy_wait returns io::Result<()>, now converts into UpstreamError via From<io::Error>
         phy_wait(fd, iface.poll_delay(timestamp, &sockets))?;
+        println!("looping")
     }
 
     Ok(())
